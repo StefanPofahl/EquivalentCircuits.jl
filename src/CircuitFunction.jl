@@ -1,4 +1,5 @@
 function circuitfunction(Circuit)
+    # version of debug branch
     b_new = true
     b_debug = true
     if b_debug println("Circuit, in: ", Circuit) end
