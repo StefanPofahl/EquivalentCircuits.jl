@@ -2,33 +2,45 @@
 using PyCall
 using PlotlyJS
 using Printf, RobustModels, EquivalentCircuits
-# install master of EquivalentCircuits:
-# add https://github.com/MaximeVH/EquivalentCircuits.jl.git
+import Conda, Pkg
+# --- install master of EquivalentCircuits: --------------------------------------------------------------------------------
+# change to Pkg-mode via "]":
+# pkg> add https://github.com/MaximeVH/EquivalentCircuits.jl.git
 # --------------------------------------------------------------------------------------------------------------------------
-# install via Conda.jl:
+# impedance.py:
+# impedance.py is a well known python package for equivalent circuit parameter optimization:
+# repository: https://github.com/ECSHackWeek/impedance.py
+# --------------------------------------------------------------------------------------------------------------------------
+# Conda.jl:
 # repository: https://github.com/JuliaPy/Conda.jl
+# --- install "impedance" in the default main julia-conda environment
+# Conda.add("impedance") 
+# --- if instalation via "repo.anaconda.com" maintained by "Anaconda, Inc" fails try "Miniforge":
+# julia> ENV["CONDA_JL_USE_MINIFORGE"] = "1"
+# change to Pkg-mode via "]":
+# pkg> build Conda
+# --- it might be that it is necessary to specify a "channel":
 # add channel: 
 # import Conda; Conda.add_channel("pypi")
 # import Conda; Conda.update()
 # import Conda; Conda.add("impedance"; channel="pypi")
 # --------------------------------------------------------------------------------------------------------------------------
-# impedance.py repository: https://github.com/ECSHackWeek/impedance.py
-# install impedance under Linux via CondaPkg (if installation via Conda failed):
-# remove old installation:
+# --- install impedance under Linux via CondaPkg (if installation via Conda failed):
+# --- remove old installation:
 # import Conda; Conda.rm("impedance")
 # import Conda; Conda.pip("uninstall", "impedance")
 # using CondaPkg; CondaPkg.rm_pip("impedance")
 # CondaPkg.rm_channel("pypi")
-# ---
-# re-install via CondaPkg:
+# --- re-install via CondaPkg:
 # using CondaPkg; CondaPkg.add("impedance")
 # using CondaPkg; CondaPkg.add_pip("impedance")
 # using CondaPkg; CondaPkg.add(impedance; version="1.4.1", channel="pypi")
 # --------------------------------------------------------------------------------------------------------------------------
 import Pkg; Pkg.status("EquivalentCircuits")
 # --- load python-package: "impedance.py" ----------------------------------------------------------------------------------
-# circuits = PyCall.pyimport("impedance.models.circuits")
-circuits = PyCall.pyimport_conda("impedance.models.circuits", "pypi")
+circuits = PyCall.pyimport("impedance.models.circuits")
+# --- alternative import command:
+# circuits = PyCall.pyimport_conda("impedance.models.circuits", "pypi")
 
 # --- example data: --------------------------------------------------------------------------------------------------------
 frequ_data = [0.0199553, 0.0251206, 0.0316296, 0.0398258, 0.0501337, 0.0631739, 0.0794492, 0.1001603, 0.1260081, 
@@ -87,9 +99,9 @@ function _MyLibOptimizeEquivalentCircuit(_circ_strg::String, _z_vec::Vector{Comp
     _i_Q = +Inf; i_stagnation = 0
     _Q_best = +Inf; _circ_params_best = []; _Z_simulated_best = []
     for i_ = 1:_max_iter
-        _circuit_params_EqCirc = EquivalentCircuits.parameteroptimisation(_circ_strg, _z_vec, _frequ) 
-        _Z_simulated_EqCirc    = EquivalentCircuits.simulateimpedance_noiseless(_circfunc, _circuit_params_EqCirc, _frequ)
-        _Q_EqCirc       = RobustModels.mean(abs.(_z_vec - _Z_simulated_EqCirc))
+        _circuit_params_EqCirc  = EquivalentCircuits.parameteroptimisation(_circ_strg, _z_vec, _frequ) 
+        _Z_simulated_EqCirc     = EquivalentCircuits.simulateimpedance_noiseless(_circfunc, _circuit_params_EqCirc, _frequ)
+        _Q_EqCirc               = RobustModels.mean(abs.(_z_vec - _Z_simulated_EqCirc))
         # --- optimize via Impedance.py / "ImpPy" -----------------------------------------------------
         _circ_str_ImpPy  = MylibExpECircJLStrToImpPy(_circ_strg)
         _initial_ImpPy   = collect(_circuit_params_EqCirc)
@@ -123,9 +135,12 @@ function _MyLibOptimizeEquivalentCircuit(_circ_strg::String, _z_vec::Vector{Comp
         if i_stagnation > _stag_max
             break
         end
-        println("i_: ", i_, "/", _max_iter, ", i_stag: ", i_stagnation, "/", _stag_max, ", \tiQ: ", _i_Q, ", \tQ_best: ", _Q_best, ", \tΔQ: ", _Q_best - _i_Q)
+        # println("i_: ", i_, "/", _max_iter, ", i_stag: ", i_stagnation, "/", _stag_max, ", \tQ_best: ", _Q_best, 
+        # ", \tΔQ=(Q_best-Q): ", _Q_best - min(_Q_ImpPy, _Q_EqCirc), ", ΔQ=(Q_ImpPy-Q_EqCirc): ", _Q_ImpPy - _Q_EqCirc)
+        println(@sprintf("i_: %2i/%i, i_stag: %2i/%i, \tQ_best: %9.3g, \tΔQ=(Q_best-Q): %9.3g, ΔQ=(Q_ImpPy-Q_EqCirc): %9.3g", 
+        i_, _max_iter, i_stagnation, _stag_max, _Q_best, _Q_best - min(_Q_ImpPy, _Q_EqCirc) , _Q_ImpPy - _Q_EqCirc))
     end
-    return _i_Q_best, _circ_params_best, _Z_simulated_best 
+    return _Q_best, _circ_params_best, _Z_simulated_best 
 end
 
 # --- plot nyquist: --------------------------------------------------------------------------------------------------------
@@ -170,4 +185,6 @@ end
 # --- main -----------------------------------------------------------------------------------------------------------------
 circ_strg = "R1-L2-[P3,R4]-[P5,R6]-[P7,R8]"
 q_, param_EQ_, Z_simulated_ = _MyLibOptimizeEquivalentCircuit(circ_strg, Z_data, frequ_data; _max_iter = 20);
+println("optimzed parameters: ")
+println(param_EQ_, "\n", '-'^100)
 plot_nyquist("Comparison Measured <-> Simulated", string(circ_strg, ", Q: ", q_), frequ_data, Z_data, Z_simulated_)
