@@ -14,7 +14,7 @@ import Conda, Pkg
 # Conda.jl:
 # repository: https://github.com/JuliaPy/Conda.jl
 # --- install "impedance" in the default main julia-conda environment
-# Conda.add("impedance") 
+# import Conda; Conda.add("impedance") 
 # --- if instalation via "repo.anaconda.com" maintained by "Anaconda, Inc" fails try "Miniforge":
 # julia> ENV["CONDA_JL_USE_MINIFORGE"] = "1"
 # change to Pkg-mode via "]":
@@ -92,22 +92,22 @@ function _MyLibEqCircNamedTuple(_circuit_str::String, _param_vec::Vector{<:Numbe
     return NamedTuple.(zip.(Ref(_vec_param_symbol), zip(_param_vec...)))
 end
 
-function _MyLibOptimizeEquivalentCircuit(_circ_strg::String, _z_vec::Vector{ComplexF64}, _frequ::Vector{<:Number}; 
+function _MyLibOptimizeEquivalentCircuit(_circ_strg::String, _Z_vec::Vector{ComplexF64}, _frequ::Vector{<:Number}; 
     _max_iter::Int=20 )
     _stag_max = max(1, min(_max_iter, trunc(Int, 0.5 * _max_iter)))
     _circfunc = EquivalentCircuits.circuitfunction(_circ_strg)
-    _i_Q = +Inf; i_stagnation = 0
+    i_stagnation = 0
     _Q_best = +Inf; _circ_params_best = []; _Z_simulated_best = []
     for i_ = 1:_max_iter
-        _circuit_params_EqCirc  = EquivalentCircuits.parameteroptimisation(_circ_strg, _z_vec, _frequ) 
+        _circuit_params_EqCirc  = EquivalentCircuits.parameteroptimisation(_circ_strg, _Z_vec, _frequ) 
         _Z_simulated_EqCirc     = EquivalentCircuits.simulateimpedance_noiseless(_circfunc, _circuit_params_EqCirc, _frequ)
-        _Q_EqCirc               = RobustModels.mean(abs.(_z_vec - _Z_simulated_EqCirc))
+        _Q_EqCirc               = RobustModels.mean(abs.(_Z_vec - _Z_simulated_EqCirc))
         # --- optimize via Impedance.py / "ImpPy" -----------------------------------------------------
         _circ_str_ImpPy  = MylibExpECircJLStrToImpPy(_circ_strg)
         _initial_ImpPy   = collect(_circuit_params_EqCirc)
         _circuit_ImpPy   = circuits.CustomCircuit(initial_guess= _initial_ImpPy, circuit= _circ_str_ImpPy)
         try
-            _circuit_ImpPy.fit(_frequ, _z_vec)         
+            _circuit_ImpPy.fit(_frequ, _Z_vec)         
         catch _error_msg
             @warn(string("ImpPy: Circuit Fit Failed"), exception = (_error_msg, catch_backtrace()))
         end
@@ -116,7 +116,7 @@ function _MyLibOptimizeEquivalentCircuit(_circ_strg::String, _z_vec::Vector{Comp
         else
             _circuit_params_ImpPy   = _MyLibEqCircNamedTuple(_circ_strg, _circuit_ImpPy.parameters_)
             _Z_simulated_ImpPy      = EquivalentCircuits.simulateimpedance_noiseless(_circfunc, _circuit_params_ImpPy, _frequ)
-            _Q_ImpPy                = RobustModels.mean(abs.(_z_vec - _Z_simulated_ImpPy))
+            _Q_ImpPy                = RobustModels.mean(abs.(_Z_vec - _Z_simulated_ImpPy))
         end
         if min(_Q_ImpPy, _Q_EqCirc) < _Q_best
             if _Q_ImpPy < _Q_EqCirc
