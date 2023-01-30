@@ -1,5 +1,5 @@
 using PyCall, EquivalentCircuits, RobustModels, Printf, PlotlyJS
-using StefanPHyCentaImpedance # MyLibOptimizeEquivalentCircuit
+# using StefanPHyCentaImpedance # _MyLibOptimizeEquivalentCircuit
 
 # --- measured values:
 frequ_data = [0.0199553, 0.0251206, 0.0316296, 0.0398258, 0.0501337, 0.0631739, 0.0794492, 0.1001603, 0.1260081, 0.1588983, 
@@ -44,9 +44,91 @@ params_Gamry = (R1 = R1_ref, L2 = L2_ref, P3w = P3w_ref, P3n = P3n_ref, R4 = R4_
 # --- END Reference case: --------------------------------------------------------------------------------------------------
 
 # --- local functions: -----------------------------------------------------------------------------------------------------
+function _MylibExpECircJLStrToImpPy(_circuit_str::String)
+    left_round_brackets =  replace(_circuit_str, "[" => "(")
+    round_brackets      =  replace(left_round_brackets, "]" => ")")
+    char_P_replaced     = replace(round_brackets, "P" => "CPE") # P = constant phase element
+    return replace(char_P_replaced, "(" => "p(")
+end
+
+function _MyLibEqCircNamedTuple(_circuit_str::String, _param_vec::Vector{<:Number})
+    _r_search_pat = r"[RLCPW]{1}[0-9]+"
+    _vec_param_symbol = Vector{Symbol}(undef, 0)
+    idx_start = 1
+    for _i = 1:length(_circuit_str) - 1
+        # global idx_start
+        match_result    = match(_r_search_pat, _circuit_str, idx_start)
+        if isnothing(match_result)
+            break
+        else
+            if String(match_result.match)[1] == 'P'
+                push!(_vec_param_symbol, Symbol(string(match_result.match, "w")))
+                push!(_vec_param_symbol, Symbol(string(match_result.match, "n")))
+            else
+                push!(_vec_param_symbol, Symbol(match_result.match))
+            end
+            _, idx_start = findfirst(match_result.match, _circuit_str)
+            idx_start += 1
+        end
+    end
+    # ---
+    return NamedTuple.(zip.(Ref(_vec_param_symbol), zip(_param_vec...)))
+end
+
+function _MyLibOptimizeEquivalentCircuit(_circ_strg::String, _frequ::Vector{<:Number}, _Z_vec::Vector{ComplexF64}; 
+    _max_iter::Int=20 )
+    # --- make the py-object available inside the function:
+    circuits = PyCall.pyimport("impedance.models.circuits")
+    # ---
+    _stag_max = max(1, min(_max_iter, trunc(Int, 0.5 * _max_iter)))
+    _circfunc = EquivalentCircuits.circuitfunction(_circ_strg)
+    i_stagnation = 0;     _Q_best = +Inf; _circ_params_best = []; _Z_simulated_best = []
+    for _i = 1:_max_iter
+        _circuit_params_EqCirc  = EquivalentCircuits.parameteroptimisation(_circ_strg, _Z_vec, _frequ) 
+        _Z_simulated_EqCirc     = EquivalentCircuits.simulateimpedance_noiseless(_circfunc, _circuit_params_EqCirc, _frequ)
+        _Q_EqCirc               = RobustModels.mean((abs.(_Z_vec - _Z_simulated_EqCirc)).^2)
+        # --- optimize via Impedance.py / "ImpPy" -----------------------------------------------------
+        _circ_str_ImpPy  = _MylibExpECircJLStrToImpPy(_circ_strg)
+        _initial_ImpPy   = collect(_circuit_params_EqCirc)
+        _circuit_ImpPy   = circuits.CustomCircuit(initial_guess= _initial_ImpPy, circuit= _circ_str_ImpPy)
+        try
+            _circuit_ImpPy.fit(_frequ, _Z_vec)         
+        catch _error_msg
+            @warn(string("ImpPy: Circuit Fit Failed"), exception = (_error_msg, catch_backtrace()))
+        end
+        if isempty(_circuit_ImpPy.parameters_)
+            _Q_ImpPy = +Inf
+        else
+            _circuit_params_ImpPy   = _MyLibEqCircNamedTuple(_circ_strg, _circuit_ImpPy.parameters_)
+            _Z_simulated_ImpPy      = EquivalentCircuits.simulateimpedance_noiseless(_circfunc, _circuit_params_ImpPy, _frequ)
+            _Q_ImpPy                = RobustModels.mean((abs.(_Z_vec - _Z_simulated_ImpPy)).^2)
+        end
+        if min(_Q_ImpPy, _Q_EqCirc) < _Q_best
+            if _Q_ImpPy < _Q_EqCirc
+                _Q_best = _Q_ImpPy
+                _circ_params_best = _circuit_params_ImpPy
+                _Z_simulated_best = _Z_simulated_ImpPy
+            else
+                _Q_best = _Q_EqCirc
+                _circ_params_best = _circuit_params_EqCirc
+                _Z_simulated_best = _Z_simulated_EqCirc
+            end
+            i_stagnation = 0
+        else
+            i_stagnation += 1
+        end
+        if i_stagnation > _stag_max
+            break
+        end
+        println(@sprintf("_i: %2i/%i, i_stag: %2i/%i, \tQ_best: %9.3g, \tΔQ=(Q_best-Q): %9.3g, \tΔQ=(Q_ImpPy-Q_EqCirc): %9.3g", 
+        _i, _max_iter, i_stagnation, _stag_max, _Q_best, _Q_best - min(_Q_ImpPy, _Q_EqCirc) , _Q_ImpPy - _Q_EqCirc))
+    end
+    return _Q_best, _circ_params_best, _Z_simulated_best 
+end
+
 function fit_three_RP_EC(_circ_strg_in::AbstractString, _eq_params_in::NamedTuple, _frequ::Vector{Float64}, _Z_data::Vector{ComplexF64}, b_DBG::Bool=false)
     _circuits = PyCall.pyimport("impedance.models.circuits")
-    _circuit_ImpPy  = MylibExpECircJLStrToImpPy(_circ_strg_in)
+    _circuit_ImpPy  = _MylibExpECircJLStrToImpPy(_circ_strg_in)
     _Q_opt = +Inf; _Q = +Inf
     fact_ = 1.3 # facto to modify initial guess parameters
     n_optimization_loops = 1 # number of for-loops to optimize parameters
@@ -273,7 +355,7 @@ function fit_three_RP_EC(_circ_strg_in::AbstractString, _eq_params_in::NamedTupl
 
     end
     # ---
-    _EQ_params_opt_NT = MyLibEqCircNamedTuple(_circ_strg_in, _params_ImPy)
+    _EQ_params_opt_NT = _MyLibEqCircNamedTuple(_circ_strg_in, _params_ImPy)
 
     # ---
     return _Q, _EQ_params_opt_NT, _Z_simulated
@@ -283,7 +365,7 @@ function simulate_impedance(_circ_strg_ref::String, _ciruit_params_NT::NamedTupl
     _frequ_data::Vector{Float64}, _Z_data::Vector{ComplexF64})
     # ---
     _circuits = PyCall.pyimport("impedance.models.circuits")
-    _circ_str_ImpPy = MylibExpECircJLStrToImpPy(_circ_strg_ref)
+    _circ_str_ImpPy = _MylibExpECircJLStrToImpPy(_circ_strg_ref)
     _circuit_ImpPy  = _circuits.CustomCircuit(initial_guess= collect(_ciruit_params_NT), circuit= _circ_str_ImpPy)
     # --- simulate impedance according to given parameters (no optimization):
     _Z_data_simu    = _circuit_ImpPy.predict(_frequ_data, use_initial = true)
@@ -318,7 +400,7 @@ function plot_Nyquist(_Z_data::Vector{ComplexF64}, _Z_Gamry::Vector{ComplexF64},
 end
 
 # --- initial parameter values via "EquivalentCircuits": -------------------------------------------------------------------
-q_init, eq_params_init, Z_init =  MyLibOptimizeEquivalentCircuit(circ_strg_ref, frequ_data, Z_data; _max_iter = 10)
+q_init, eq_params_init, Z_init =  _MyLibOptimizeEquivalentCircuit(circ_strg_ref, frequ_data, Z_data; _max_iter = 10)
 # --- reference fit / GamryFit: --------------------------------------------------------------------------------------------
 Z_Gamry,   q_Gamry   = simulate_impedance(circ_strg_ref, params_Gamry,   frequ_data, Z_data)
 # --- call optimization function: ------------------------------------------------------------------------------------------
