@@ -1,6 +1,5 @@
 # --- ----------------------------------------------------------------------------------------------------------------------
-# https://www.pcre.org/current/doc/html/pcre2syntax.html
-# https://perldoc.perl.org/perlre#Modifiers
+# example how to import Gamry *.DTA-files
 # --- ----------------------------------------------------------------------------------------------------------------------
 using CSV, Printf
 fn_path, _ = splitdir(@__FILE__())
