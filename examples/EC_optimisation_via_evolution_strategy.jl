@@ -100,9 +100,9 @@ function parameopt(_circuitstring::String, _Z_measured, _frequencies, _optim_met
         # opt_func = OptimizationFunction(objective)
         # println("DBG parameopt, typeof(opt_func)", typeof(opt_func))
 
-        prob = Optimization.OptimizationProblem(objective, initial_parameters, SciMLBase.NullParameters(); lb = lower, ub = upper)
+        # prob = Optimization.OptimizationProblem(objective, initial_parameters, SciMLBase.NullParameters(),; lb = lower, ub = upper)
         # sol = solve(prob, Evolutionary.CMAES(μ = 40, λ = 100))
-        println("DBG parameopt, sol.u: ", sol.u, "\n --- END ---", '-'^80, "\n") 
+        println("DBG parameopt, sol.u: ", sol.u, "\n --- END ---", '-'^110, "\n") 
         return parameters = initial_parameters
     else
         error("func parameopt: Methode not yet implemented!")
@@ -149,7 +149,7 @@ function generate_traces(_circuitstring, _ref_data, _Z_measured, _frequencies, _
     _traces[1]  = _Z_measured;   _names[1]   = "Z_measured";       _fited_par[1] = missing  
     _traces[2]  = _ref_data;     _names[2]   = "Ref_SW_fit";       _fited_par[2] = missing
     for _i in 3:length(_traces)
-        @info(string("--- generate_traces, #: ", _i - 2, ", next methode: ", _method_names[_i - 2], "\t-----------------------------"))
+        @info(string("--- generate_traces, #: ", _i - 2, ", next methode: ", _opt_methods[_i - 2], "\t-----------------------------"))
         _traces[_i], _fited_par[_i] = optimise_and_simulate(_circuitstring, _Z_measured, _frequencies, _opt_methods[_i - 2])
         _names[_i]  = _opt_methods[_i - 2]
     end
