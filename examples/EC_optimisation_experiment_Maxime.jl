@@ -8,9 +8,12 @@ using Optim, BlackBoxOptim
 # --- remark: no. 14 may crash "simultaneous_perturbation_stochastic_approximation"
 idx_methode_selection = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] 
 idx_methode_selection = [1, 4, 10, 12]
-idx_methode_selection = [1, 4, 10, 13, 14]
+# idx_methode_selection = [1, 4, 10, 13, 14]
+idx_methode_selection = [1, 4, 10] # fast
 # --- select part of data points for equivalent circuit fitting:
 idx_data = range(8, stop= 52)
+# --- Measurements at low frequencies should be more important!
+weight_tuning_low_frequ = [10.0, 10, 10, 10, 10, 10, 10, 10.0, 10, 10, 5, 5, 5, 5]
 
 # --- measurement frequencies: --------------------------------------------------------------------------------------------
 frequ_data = [0.0199553, 0.0251206, 0.0316296, 0.0398258, 0.0501337, 0.0631739, 0.0794492, 0.1001603, 0.1260081, 0.1588983, 
@@ -78,12 +81,32 @@ bb_opt_method_names = bb_opt_method_names[idx_methode_selection]
 # --- function "denumber_circuit()"
 denumber_circuit(Circuit) = replace(Circuit, r"[0-9]" => "")
 
+# --- fill /build weighting vector: ----------------------------------------------------------------------------------------
+function weighting_vector(_Z_measured::Vector{ComplexF64}, _weight_tuning::Vector{Float64}=Vector{Float64}(undef, 0);
+    b_tail::Bool=true)
+    _n_measuremnt = length(_Z_measured); _n_weighing = length(_weight_tuning)
+    if isempty(_weight_tuning) 
+        _weight_vec = ones(_n_measuremnt, )
+    elseif _n_weighing  < _n_measuremnt
+        fill_vec = ones(_n_measuremnt - _n_weighing, )
+        if b_tail
+            _weight_vec = vcat(fill_vec, _weight_tuning)
+        else
+            _weight_vec = vcat(_weight_tuning, fill_vec)
+        end
+    elseif length(_weight_tuning)  > _n_measuremnt
+        @warn("Weighing factor is larger then number of measured points! - Truncated weighing vector will be used!")
+        _weight_vec = _weight_tuning[1:_n_measuremnt]
+    end
+    return _weight_vec
+end
+
 # Function used to optimise the circuit parameters, using a method from BlackBoxOptim, followed by Nelder--Mead simplex fine-tuning.
-function parameopt(_circuitstring::String, _Z_measured, _frequencies, _optim_method)
+function parameopt(_circuitstring::String, _Z_measured, _frequencies, _optim_method; weighting=nothing)
     elements            = foldl(replace,["["=>"","]"=>"","-"=>"",","=>""], init = denumber_circuit(_circuitstring))
     initial_parameters  = EquivalentCircuits.flatten(EquivalentCircuits.karva_parameters(elements));
     circfunc            = circuitfunction(_circuitstring)
-    objective           = EquivalentCircuits.objectivefunction(circfunc, _Z_measured, _frequencies) 
+    objective           = EquivalentCircuits.objectivefunction(circfunc, _Z_measured, _frequencies, weighting) 
     lower               = zeros(length(initial_parameters))
     upper               = get_parameter_upper_bound(_circuitstring)
 
@@ -121,7 +144,7 @@ end
 
 # Optimise the circuit parameters and simulate the resulting impedance spectrum.
 function optimise_and_simulate(_circuitstring, _Z_measured, _frequencies, _optim_method)
-    _parameters  = parameopt(_circuitstring, _Z_measured, _frequencies, _optim_method)
+    _parameters  = parameopt(_circuitstring, _Z_measured, _frequencies, _optim_method; weighting = weight_vec)
     _trace       = simulateimpedance_noiseless(circuitfunction(_circuitstring), _parameters, _frequencies)
     return _trace, _parameters
 end
@@ -144,22 +167,15 @@ end
 # The fitting errors calculated using the modulus weighted objective function,
 # you can adjust the function to see other fitting quality metrics (e.g. removal of the denominator gives the MSE).
 function trace_quality(_Z_measured::Vector{ComplexF64}, trace::Vector{ComplexF64}; 
-    weighing_fac::Vector{Float64}=Vector{Float64}(undef, 0), b_tail::Bool=true)
-    _n_measuremnt = length(_Z_measured); _n_weighing = length(weighing_fac)
-    if isempty(weighing_fac) 
-        weighing_fac = ones(_n_measuremnt, )
-    elseif _n_weighing  < _n_measuremnt
-        fill_vec = ones(_n_measuremnt - _n_weighing, )
-        if b_tail
-            weighing_fac = vcat(fill_vec, weighing_fac)
-        else
-            weighing_fac = vcat(weighing_fac, fill_vec)
-        end
-    elseif length(weighing_fac)  > _n_measuremnt
-        @warn("Weighing factor is larger then number of measured points! - Truncated weighing vector will be used!")
-        weighing_fac = weighing_fac[1:_n_measuremnt]
+    weighting_fac::Vector{Float64}=Vector{Float64}(undef, 0))
+    _n_measuremnt = length(_Z_measured); _n_weighting = length(weighting_fac)
+    if isempty(weighting_fac) 
+        weighting_fac = ones(_n_measuremnt, )
+    elseif _n_weighing  != _n_measuremnt
+        @warn("Length of weighing factor non-equal to number of measured points! - Unity vector will be used!")
+        weighting_fac = ones(_n_measuremnt, )
     end
-    return mean((abs.(weighing_fac .* (_Z_measured - trace)).^2)./(abs.(_Z_measured).^2 .+ abs.(trace).^2))
+    return mean((abs.(weighting_fac .* (_Z_measured - trace)).^2)./(abs.(_Z_measured).^2 .+ abs.(trace).^2))
 end
 
 # --- Nyquist plots of arbitraty number of impedance spectra, compared to Z_measured and reference fit.
@@ -207,9 +223,14 @@ n_measured = length(frequ_data)
 if idx_data[end] > n_measured
     error("Selection of measured points \"idx_data\" exceeds vector of measured points!")
 end
+
+# --- select data:
 frequ_data_sel       = frequ_data[idx_data]
 Z_data_sel           = Z_data[idx_data]
 trace_ref_fit_SW_sel = trace_ref_fit_SW[idx_data]
+# --- build weighting vector of the correct length:
+weight_vec = weighting_vector(Z_data_sel, weight_tuning_low_frequ, b_tail= false)
+
 # --- Evaluate the optimisation methods and make plots: --------------------------------------------------------------------
 @time begin
     traces_, names_, fitted_params = generate_traces(circ_strg_ref, trace_ref_fit_SW_sel, Z_data_sel, frequ_data_sel, bb_opt_methods, bb_opt_method_names)
