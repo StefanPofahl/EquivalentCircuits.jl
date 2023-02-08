@@ -1,13 +1,14 @@
 # --- EquivalentCircuits: --------------------------------------------------------------------------------------------------
 # || repository of EquivalentCircuits.jl: https://github.com/MaximeVH/EquivalentCircuits.jl
-# include(raw"C:\data\git_repos\hycenta_stefan_pofahl\projects\ElektrolyseMR\optimize_equivalent_circuit_only_ECircJL.jl")
-# -----------------------------------------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------------------------------
 # || > Check status of package:
 # || > using Pkg; Pkg.status("EquivalentCircuits")
 # || > If master version, should be used, remove current version, if the stable version is installed:
 # || > using Pkg; Pkg.rm("EquivalentCircuits")
+# || > To install from master branch:
 # || > Pkg.add(url="https://github.com/MaximeVH/EquivalentCircuits.jl.git#master")
 # -------------------------------------------------------------------------------------------------------------------------
+# some Makie links:
 # https://docs.makie.org/stable/documentation/nodes/index.html
 # https://discourse.julialang.org/t/glmakie-beginners-help-multiple-sliders-and-an-arrow/92113
 # https://docs.makie.org/stable/examples/blocks/slidergrid/
